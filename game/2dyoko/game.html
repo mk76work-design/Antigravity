@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>HD-2D Pac-Man Style Game - Final Logic</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            user-select: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            color: white;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 24px;
+            text-shadow: 2px 2px 0px black;
+        }
+
+        .message-box {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            text-align: center;
+            display: none;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px 60px;
+            border: 4px solid white;
+            box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.5);
+            pointer-events: auto;
+        }
+
+        .title {
+            font-size: 60px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+        }
+
+        .win {
+            color: #55ff55;
+            text-shadow: 4px 4px 0px #005500;
+        }
+
+        .lose {
+            color: #ff5555;
+            text-shadow: 4px 4px 0px #550000;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 24px;
+            cursor: pointer;
+            background: #ffffff;
+            border: 4px solid #000000;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            transition: all 0.1s;
+            box-shadow: 5px 5px 0px rgba(0, 0, 0, 0.5);
+        }
+
+        button:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 7px 7px 0px rgba(0, 0, 0, 0.5);
+        }
+
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-layer">
+        <div id="info">Arrows: Move | Eat Power Pellets!</div>
+
+        <div id="game-over-box" class="message-box">
+            <div class="title lose">GAME OVER</div>
+            <button onclick="location.reload()">RETRY</button>
+        </div>
+
+        <div id="game-clear-box" class="message-box">
+            <div class="title win">STAGE CLEAR!</div>
+            <button onclick="location.reload()">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Configuration ---
+        const TILE_SIZE = 10;
+        const BASE_MOVE_DURATION = 0.25;
+        const MOVE_SPEED_MULTIPLIER = 1.6;
+        const MOVE_DURATION = BASE_MOVE_DURATION / MOVE_SPEED_MULTIPLIER;
+
+        const SPRITE_SCALE = 16;
+        const DOT_RADIUS = 0.8;
+        const POWER_DOT_RADIUS = 2.0;
+        const POWER_DURATION = 10.0;
+
+        const ENEMY_SPAWN_INTERVAL = 4.0;
+        const RESPAWN_COOLDOWN = 3.0; // Time spent "dead" in house before becoming WAITING
+
+        // Map Legend:
+        // W: Wall
+        // _: Ghost Door (Wall for P, Path for E)
+        // .: Dot
+        // O: Power
+        // P: Player Start
+        // G: Ghost Start (Inside House)
+        //  : Empty (No dot)
+
+        const mapConfig = [
+            "WWWWWWWWWWWWWWWWWWWW",
+            "WO........WW.......OW",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W..................W",
+            "W.WW.WW.____.WW.WW.W", // Gate
+            "W....W..GGGG..W....W", // Ghost House (G) - No dots here
+            "WWWW.W.WWWWWW.W.WWWW",
+            "W......W....W......W", // Connected tunnel
+            "WWWW.W.WWWWWW.W.WWWW",
+            "W....W........W....W",
+            "W.WW.WW.WWWW.WW.WW.W",
+            "WO......P.........OW",
+            "WWWWWWWWWWWWWWWWWWWW"
+        ];
+
+        const DIR = { NONE: { x: 0, z: 0 }, UP: { x: 0, z: -1 }, DOWN: { x: 0, z: 1 }, LEFT: { x: -1, z: 0 }, RIGHT: { x: 1, z: 0 } };
+
+        // Globals
+        let scene, camera, renderer, clock;
+        let walls = [], dots = [], enemies = [];
+        let player = {
+            sprite: null,
+            col: 0, row: 0,
+            targetCol: 0, targetRow: 0,
+            lerpTime: 0, isMoving: false,
+            currentDir: DIR.NONE, nextDir: DIR.NONE,
+            spawnCol: 0, spawnRow: 0,
+            animTimer: 0, frame: 0
+        };
+
+        let gameState = {
+            over: false,
+            powerTimer: 0,
+            dotsRemaining: 0,
+            enemyReleaseTimer: 0,
+        };
+
+        // Texture Cache
+        let texPacman = [], texGhost = [], texGhostVuln, texGhostEyes;
+
+        init();
+        animate();
+
+        function createPixelTexture(drawFn) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            drawFn(ctx, 64, 64);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.magFilter = THREE.NearestFilter;
+            return tex;
+        }
+
+        function generateTextures() {
+            // Pacman 
+            const colors = ['#FFD700', '#FFA500'];
+            for (let i = 0; i < 3; i++) {
+                texPacman.push(createPixelTexture((ctx, w, h) => {
+                    ctx.fillStyle = colors[0];
+                    ctx.beginPath();
+                    ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = 'black';
+                    ctx.fillRect(w / 2 + 4, h / 4, 6, 6);
+
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.beginPath();
+                    const mouthAngle = (i * 0.2);
+                    ctx.moveTo(w / 2, h / 2);
+                    ctx.arc(w / 2, h / 2, w / 2, -mouthAngle, mouthAngle);
+                    ctx.fill();
+                    ctx.globalCompositeOperation = 'source-over';
+
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2); ctx.stroke();
+                }));
+            }
+
+            // Ghost Body
+            texGhost = createPixelTexture((ctx, w, h) => {
+                ctx.fillStyle = '#FFFFFF'; // White, to be tinted
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2 - 4, w / 2 - 4, Math.PI, 0);
+                ctx.lineTo(w - 4, h - 4);
+                for (let k = 1; k <= 3; k++) {
+                    ctx.lineTo(w - (w / 3) * k, h - (k % 2 == 0 ? 4 : 10));
+                }
+                ctx.lineTo(4, h / 2 - 4);
+                ctx.fill();
+            });
+
+            // Ghost Eyes (Separate texture to layer, or just draw on body? 
+            // Simple: just draw eyes on body texture and flip sprite for direction?
+            // Actually, let's keep it simple: Eyes included in texture.
+            // Revert to baked eyes for simplicity in single file without multi-sprite composition complexity.
+            // But we want "Cutie eyes".
+            texGhost = createPixelTexture((ctx, w, h) => {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2 - 4, w / 2 - 4, Math.PI, 0);
+                ctx.lineTo(w - 4, h - 4);
+                for (let k = 1; k <= 3; k++) {
+                    ctx.lineTo(w - (w / 3) * k, h - (k % 2 == 0 ? 4 : 10));
+                }
+                ctx.lineTo(4, h / 2 - 4);
+                ctx.fill();
+
+                // Eyes Background (White)
+                ctx.fillStyle = 'white';
+                ctx.beginPath(); ctx.arc(w / 2 - 10, h / 2 - 5, 8, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(w / 2 + 10, h / 2 - 5, 8, 0, Math.PI * 2); ctx.fill();
+
+                // Pupils (Black) - Looking slightly Right
+                ctx.fillStyle = 'black';
+                ctx.beginPath(); ctx.arc(w / 2 - 7, h / 2 - 5, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(w / 2 + 13, h / 2 - 5, 4, 0, Math.PI * 2); ctx.fill();
+            });
+
+            texGhostVuln = createPixelTexture((ctx, w, h) => {
+                ctx.fillStyle = '#0000FF';
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2 - 4, w / 2 - 4, Math.PI, 0);
+                ctx.lineTo(w - 4, h - 4);
+                ctx.lineTo(4, h - 4);
+                ctx.fill();
+
+                ctx.strokeStyle = '#FFCCFF';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, h - 15);
+                ctx.lineTo(15, h - 25); ctx.lineTo(25, h - 15); ctx.lineTo(35, h - 25); ctx.lineTo(45, h - 15);
+                ctx.stroke();
+
+                ctx.fillStyle = '#FFCCFF';
+                ctx.fillRect(w / 2 - 12, 15, 6, 6);
+                ctx.fillRect(w / 2 + 6, 15, 6, 6);
+            });
+        }
+
+        function init() {
+            generateTextures();
+            clock = new THREE.Clock();
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050510);
+
+            // Map Dimensions
+            const mapW = mapConfig[0].length * TILE_SIZE;
+            const mapH = mapConfig.length * TILE_SIZE;
+            const cx = mapW / 2, cz = mapH / 2;
+
+            // Camera: Top Down with slight tilt
+            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.set(cx, 280, cz + 60);
+            camera.lookAt(cx, 0, cz);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = false;
+            document.body.appendChild(renderer.domElement);
+
+            // Light: High Ambient
+            scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+            const dl = new THREE.DirectionalLight(0xffffff, 0.2);
+            dl.position.set(20, 100, 10);
+            scene.add(dl);
+
+            buildLevel();
+
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('resize', onResize);
+        }
+
+        function buildLevel() {
+            // Materials
+            const matWall = new THREE.MeshStandardMaterial({
+                color: 0x3344cc,
+                roughness: 0.1,
+                metalness: 0.5,
+                transparent: true,
+                opacity: 0.8
+            });
+            const matDot = new THREE.MeshPhongMaterial({ color: 0xffbbbb, emissive: 0x552222 });
+            const matPower = new THREE.MeshPhongMaterial({ color: 0xffffaa, emissive: 0x888800 });
+
+            walls = []; dots = []; enemies = [];
+            gameState.dotsRemaining = 0;
+            gameState.enemyReleaseTimer = 0;
+
+            const ghostColors = [0xFF0000, 0xFFB8FF, 0x00FFFF, 0xFFB852];
+
+            for (let r = 0; r < mapConfig.length; r++) {
+                for (let c = 0; c < mapConfig[r].length; c++) {
+                    const char = mapConfig[r][c];
+                    const x = c * TILE_SIZE + TILE_SIZE / 2;
+                    const z = r * TILE_SIZE + TILE_SIZE / 2;
+
+                    const floorGeo = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
+                    const floorMat = new THREE.MeshStandardMaterial({ color: (c + r) % 2 == 0 ? 0x111116 : 0x151520, roughness: 0.8 });
+                    const floor = new THREE.Mesh(floorGeo, floorMat);
+                    floor.rotation.x = -Math.PI / 2;
+                    floor.position.set(x, 0, z);
+                    scene.add(floor);
+
+                    if (char === 'W') {
+                        const h = 5;
+                        const m = new THREE.Mesh(new THREE.BoxGeometry(TILE_SIZE, h, TILE_SIZE), matWall);
+                        m.position.set(x, h / 2, z);
+                        scene.add(m);
+                        walls.push({ c, r });
+                    }
+                    else if (char === 'G') {
+                        // Ghost Spawn - Make sure it's inside 'W' perimeter with '_' door
+                        floor.material.color.setHex(0x221122); // House floor
+                        const idx = enemies.length;
+                        const color = ghostColors[idx % ghostColors.length];
+                        createEnemy(x, z, c, r, color);
+                    }
+                    else if (char === 'P') {
+                        createPlayer(x, z);
+                        player.col = c; player.row = r;
+                        player.targetCol = c; player.targetRow = r;
+                        player.spawnCol = c; player.spawnRow = r;
+                    }
+                    else if (char === 'O') {
+                        createDot(x, z, c, r, true, matPower);
+                    }
+                    else if (char === '.') {
+                        createDot(x, z, c, r, false, matDot);
+                    }
+                    else if (char === '_') {
+                        // Gate
+                        floor.material.color.setHex(0x552255); // Gate Color
+                        const gateMesh = new THREE.Mesh(
+                            new THREE.BoxGeometry(TILE_SIZE, 1, TILE_SIZE / 4),
+                            new THREE.MeshBasicMaterial({ color: 0xffaa00 })
+                        );
+                        gateMesh.position.set(x, 0.5, z);
+                        scene.add(gateMesh);
+                    }
+                }
+            }
+        }
+
+        function createDot(x, z, c, r, isPower, mat) {
+            const g = new THREE.SphereGeometry(isPower ? POWER_DOT_RADIUS : DOT_RADIUS);
+            const m = new THREE.Mesh(g, mat);
+            m.position.set(x, 3, z);
+            scene.add(m);
+            dots.push({ mesh: m, c, r, isPower, active: true, baseY: 3 });
+            gameState.dotsRemaining++;
+        }
+
+        function createPlayer(x, z) {
+            const mat = new THREE.SpriteMaterial({ map: texPacman[0], color: 0xffffff });
+            player.sprite = new THREE.Sprite(mat);
+            player.sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE, 1);
+            player.sprite.position.set(x, SPRITE_SCALE / 2, z);
+
+            const shadowGeo = new THREE.CircleGeometry(4, 16);
+            const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0.5, transparent: true });
+            const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+            shadow.rotation.x = -Math.PI / 2;
+            shadow.position.set(0, -0.45, 0);
+            player.sprite.add(shadow);
+
+            scene.add(player.sprite);
+        }
+
+        function createEnemy(x, z, c, r, colorHex) {
+            const mat = new THREE.SpriteMaterial({ map: texGhost, color: colorHex });
+            const sprite = new THREE.Sprite(mat);
+            sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE, 1);
+            sprite.position.set(x, SPRITE_SCALE / 2, z);
+
+            const shadow = new THREE.Mesh(
+                new THREE.CircleGeometry(4, 16),
+                new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0.5, transparent: true })
+            );
+            shadow.rotation.x = -Math.PI / 2;
+            shadow.position.set(0, -0.45, 0);
+            sprite.add(shadow);
+
+            scene.add(sprite);
+
+            enemies.push({
+                sprite: sprite,
+                baseColor: colorHex,
+                col: c, row: r,
+                targetCol: c, targetRow: r,
+                spawnCol: c, spawnRow: r,
+                currentDir: DIR.NONE,
+                lerpTime: 0, isMoving: false,
+                status: 'WAITING', // WAITING, NORMAL, VULNERABLE, DEAD_COOLDOWN
+                cooldownTimer: 0
+            });
+        }
+
+        function onKeyDown(e) {
+            if (gameState.over) return;
+            switch (e.code) {
+                case 'ArrowUp': player.nextDir = DIR.UP; break;
+                case 'ArrowDown': player.nextDir = DIR.DOWN; break;
+                case 'ArrowLeft': player.nextDir = DIR.LEFT; break;
+                case 'ArrowRight': player.nextDir = DIR.RIGHT; break;
+            }
+        }
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function isWall(c, r, isPlayer) {
+            if (r < 0 || c < 0 || r >= mapConfig.length || c >= mapConfig[0].length) return true;
+            const char = mapConfig[r][c];
+            if (char === 'W') return true;
+            if (char === '_' && isPlayer) return true; // Player cannot pass gate
+            // Enemies can pass _
+            return false;
+        }
+
+        function updateEntity(ent, dt, isPlayer) {
+            if (isPlayer) {
+                if (ent.currentDir === DIR.LEFT) ent.sprite.material.rotation = Math.PI;
+                let rot = 0;
+                if (ent.currentDir === DIR.UP) rot = Math.PI / 2;
+                if (ent.currentDir === DIR.DOWN) rot = -Math.PI / 2;
+                if (ent.currentDir === DIR.LEFT) rot = Math.PI;
+                if (ent.currentDir === DIR.RIGHT) rot = 0;
+                ent.sprite.material.rotation = rot;
+            } else {
+                // Ghost Logic for Dead
+                if (ent.status === 'DEAD_COOLDOWN') {
+                    ent.cooldownTimer -= dt;
+                    ent.sprite.visible = false; // Hide while dead
+                    if (ent.cooldownTimer <= 0) {
+                        ent.status = 'WAITING';
+                        ent.sprite.visible = true;
+                        // Reset to Ghost House Center?
+                        // They are already warped there when eaten.
+                        // Wait for release timer to pick them up.
+                    }
+                    return;
+                }
+            }
+
+            if (!ent.isMoving) {
+                if (!isPlayer && ent.status === 'WAITING') return;
+
+                let moveDir = DIR.NONE;
+
+                if (isPlayer) {
+                    if (ent.nextDir !== DIR.NONE && !isWall(ent.col + ent.nextDir.x, ent.row + ent.nextDir.z, true)) {
+                        ent.currentDir = ent.nextDir;
+                        moveDir = ent.currentDir;
+                    } else if (ent.currentDir !== DIR.NONE && !isWall(ent.col + ent.currentDir.x, ent.row + ent.currentDir.z, true)) {
+                        moveDir = ent.currentDir;
+                    }
+                } else {
+                    // Enemy AI
+
+                    const exits = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT].filter(d => !isWall(ent.col + d.x, ent.row + d.z, false));
+                    // Simple logic: Don't reverse unless dead end.
+                    let valid = exits;
+                    if (exits.length > 1 && ent.currentDir !== DIR.NONE) {
+                        valid = exits.filter(d => !(d.x === -ent.currentDir.x && d.z === -ent.currentDir.z));
+                    }
+
+                    if (valid.length === 0) valid = exits; // Dead end
+
+                    // Intersection choice or stuck
+                    if (exits.length > 2 || isWall(ent.col + ent.currentDir.x, ent.row + ent.currentDir.z, false) || ent.currentDir === DIR.NONE) {
+                        moveDir = valid[Math.floor(Math.random() * valid.length)] || DIR.NONE;
+                        ent.currentDir = moveDir;
+                    } else {
+                        moveDir = ent.currentDir;
+                    }
+                }
+
+                if (moveDir !== DIR.NONE && !isWall(ent.col + moveDir.x, ent.row + moveDir.z, isPlayer)) {
+                    ent.isMoving = true;
+                    ent.targetCol = ent.col + moveDir.x;
+                    ent.targetRow = ent.row + moveDir.z;
+                    ent.lerpTime = 0;
+                }
+            } else {
+                let speed = MOVE_DURATION;
+                if (!isPlayer && ent.status === 'VULNERABLE') speed *= 2.0;
+
+                ent.lerpTime += dt / speed;
+                if (ent.lerpTime >= 1.0) {
+                    ent.col = ent.targetCol;
+                    ent.row = ent.targetRow;
+                    ent.isMoving = false;
+                    ent.lerpTime = 0;
+
+                    const gx = ent.col * TILE_SIZE + TILE_SIZE / 2;
+                    const gz = ent.row * TILE_SIZE + TILE_SIZE / 2;
+
+                    ent.sprite.position.set(gx, SPRITE_SCALE / 2, gz);
+
+                    if (isPlayer) checkEat(ent.col, ent.row);
+
+                    updateEntity(ent, 0, isPlayer);
+                } else {
+                    const sx = ent.col * TILE_SIZE + TILE_SIZE / 2;
+                    const sz = ent.row * TILE_SIZE + TILE_SIZE / 2;
+                    const ex = ent.targetCol * TILE_SIZE + TILE_SIZE / 2;
+                    const ez = ent.targetRow * TILE_SIZE + TILE_SIZE / 2;
+                    const t = ent.lerpTime;
+
+                    const nx = sx + (ex - sx) * t;
+                    const nz = sz + (ez - sz) * t;
+
+                    ent.sprite.position.set(nx, SPRITE_SCALE / 2, nz);
+                }
+            }
+        }
+
+        function checkEat(c, r) {
+            const idx = dots.findIndex(d => d.active && d.c === c && d.r === r);
+            if (idx !== -1) {
+                const dot = dots[idx];
+                dot.active = false;
+                dot.mesh.visible = false;
+                gameState.dotsRemaining--;
+
+                if (dot.isPower) activatePowerMode();
+                if (gameState.dotsRemaining <= 0) gameWin();
+            }
+        }
+
+        function activatePowerMode() {
+            gameState.powerTimer = POWER_DURATION;
+            enemies.forEach(e => {
+                if (e.status !== 'WAITING' && e.status !== 'DEAD_COOLDOWN') {
+                    e.status = 'VULNERABLE';
+                    e.sprite.material.map = texGhostVuln;
+                    e.sprite.material.color.setHex(0xffffff);
+                }
+            });
+        }
+
+        function checkCollisions() {
+            const px = player.sprite.position.x;
+            const pz = player.sprite.position.z;
+
+            enemies.forEach(e => {
+                if (e.status === 'DEAD_COOLDOWN' || e.status === 'WAITING') return;
+
+                const ex = e.sprite.position.x;
+                const ez = e.sprite.position.z;
+                const dist = Math.hypot(px - ex, pz - ez);
+
+                if (dist < (TILE_SIZE * 0.8)) {
+                    if (e.status === 'VULNERABLE') {
+                        // Eaten!
+                        e.status = 'DEAD_COOLDOWN';
+                        e.cooldownTimer = RESPAWN_COOLDOWN;
+
+                        // Warp Home
+                        e.col = e.spawnCol; e.row = e.spawnRow;
+                        e.targetCol = e.spawnCol; e.targetRow = e.spawnRow;
+                        e.isMoving = false;
+                        e.sprite.position.set(e.col * TILE_SIZE + TILE_SIZE / 2, SPRITE_SCALE / 2, e.row * TILE_SIZE + TILE_SIZE / 2);
+
+                        e.sprite.material.map = texGhost;
+                        e.sprite.material.color.setHex(e.baseColor);
+                    } else if (e.status === 'NORMAL') {
+                        gameOver();
+                    }
+                }
+            });
+        }
+
+        function gameOver() {
+            gameState.over = true;
+            document.getElementById('game-over-box').style.display = 'block';
+        }
+
+        function gameWin() {
+            gameState.over = true;
+            document.getElementById('game-clear-box').style.display = 'block';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!gameState.over) {
+                const dt = clock.getDelta();
+                const now = clock.getElapsedTime();
+
+                // Spawn Logic
+                gameState.enemyReleaseTimer += dt;
+                if (gameState.enemyReleaseTimer > ENEMY_SPAWN_INTERVAL) {
+                    // Find a waiting ghost to release (Prioritize those who just finished waiting)
+                    const waiter = enemies.find(e => e.status === 'WAITING');
+                    if (waiter) {
+                        waiter.status = 'NORMAL';
+                        // Force move UP out of house if needed? 
+                        // AI will find way out through gate '_' since it is passable for enemies.
+                        gameState.enemyReleaseTimer = 0;
+                    }
+                }
+
+                if (gameState.powerTimer > 0) {
+                    gameState.powerTimer -= dt;
+                    if (gameState.powerTimer <= 0) {
+                        gameState.powerTimer = 0;
+                        enemies.forEach(e => {
+                            if (e.status !== 'WAITING' && e.status !== 'DEAD_COOLDOWN') {
+                                e.status = 'NORMAL';
+                                e.sprite.material.map = texGhost;
+                                e.sprite.material.color.setHex(e.baseColor);
+                            }
+                        });
+                    }
+                }
+
+                player.animTimer += dt;
+                if (player.animTimer > 0.1) {
+                    player.frame = (player.frame + 1) % 3;
+                    const f = [0, 1, 2, 1][player.frame % 4];
+                    player.sprite.material.map = texPacman[f];
+                    player.animTimer = 0;
+                }
+
+                updateEntity(player, dt, true);
+                enemies.forEach(e => updateEntity(e, dt, false));
+                checkCollisions();
+            }
+
+            const t = Date.now() * 0.005;
+            dots.forEach(d => {
+                if (d.active) {
+                    d.mesh.position.y = d.baseY + Math.sin(t + d.c) * 0.5;
+                    if (d.isPower) d.mesh.scale.setScalar(1 + Math.sin(t * 2) * 0.2);
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+
+</html>

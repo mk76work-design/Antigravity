@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>HD-2D Pac-Man Style Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            user-select: none;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            color: white;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 24px;
+            text-shadow: 2px 2px 0px black;
+        }
+
+        .message-box {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            text-align: center;
+            display: none;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px 60px;
+            border: 4px solid white;
+            box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.5);
+            pointer-events: auto;
+        }
+
+        .title {
+            font-size: 60px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+        }
+
+        .win {
+            color: #55ff55;
+            text-shadow: 4px 4px 0px #005500;
+        }
+
+        .lose {
+            color: #ff5555;
+            text-shadow: 4px 4px 0px #550000;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 24px;
+            cursor: pointer;
+            background: #ffffff;
+            border: 4px solid #000000;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            transition: all 0.1s;
+            box-shadow: 5px 5px 0px rgba(0, 0, 0, 0.5);
+        }
+
+        button:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 7px 7px 0px rgba(0, 0, 0, 0.5);
+        }
+
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: 3px 3px 0px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-layer">
+        <div id="info">Arrows: Move | Eat Power Pellets!</div>
+
+        <div id="game-over-box" class="message-box">
+            <div class="title lose">GAME OVER</div>
+            <button onclick="location.reload()">RETRY</button>
+        </div>
+
+        <div id="game-clear-box" class="message-box">
+            <div class="title win">STAGE CLEAR!</div>
+            <button onclick="location.reload()">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Configuration ---
+        const TILE_SIZE = 10;
+        const BASE_MOVE_DURATION = 0.25;
+        const MOVE_SPEED_MULTIPLIER = 1.5; // Fast Speed
+        const MOVE_DURATION = BASE_MOVE_DURATION / MOVE_SPEED_MULTIPLIER;
+
+        const SPRITE_SCALE = 16; // Size of sprites
+        const DOT_RADIUS = 0.8;
+        const POWER_DOT_RADIUS = 2.0;
+        const POWER_DURATION = 10.0;
+
+        // Spawn Logic
+        const ENEMY_SPAWN_INTERVAL = 3.0; // Seconds between releases
+
+        // Map: H=Ghost House (Empty but restricted?), G=Ghost Spawn (inside house), D=Door (enemies only)
+        // Let's interpret:
+        // W = Wall
+        // . = Dot
+        // O = Power
+        // P = Player Start
+        // H = Ghost House (No dot, no wall, restricted for player?) -> Let's treat as Path for simplified AI but visually distinct?
+        //     Or easier: treating as path, but surrounded by walls with a "Door" logic.
+        //     Let's put walls 'W' around center, and 'D' (Door) that enemies can pass but players can't?
+        //     For simplicity in this 1-file constraint: Just use W and open path, but ghosts start inside a "box" of W with one exit.
+
+        // Revised Map with Center House
+        const mapString = [
+            "WWWWWWWWWWWWWWWWWWWW",
+            "WO........WW.......OW",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W..................W",
+            "W.WW.WW.WWWW.WW.WW.W",
+            "W....W...GG...W....W", // Ghost House Center
+            "WWWW.W.W....W.W.WWWW", // The dots here are just empty space
+            "D......W....W......D", // D = Tunnel/Path? Just Normal Path here.
+            "WWWW.W.WWWWWW.W.WWWW",
+            "W.WW.WW......WW.WW.W",
+            "W.WW....WWWW....WW.W",
+            "WO.......P.........OW",
+            "WWWWWWWWWWWWWWWWWWWW"
+        ];
+
+        // But we need the ghosts to actually be trapped.
+        // Let's define the house coordinates manually or by specific char 'H'.
+        // G = Ghost Spawn (Starts Inside House)
+        // - = Ghost House Exit (Door, only ghosts can pass initially? Or just open?)
+        // Let's make it a simple open enclosure for now to guarantee functionality without complex A* pathfinding.
+
+        // Refined Map for functionality & flow
+        const mapConfig = [
+            "WWWWWWWWWWWWWWWWWWWW",
+            "WO........WW.......OW",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W.WW.WWW.WW.WWW.WW.W",
+            "W..................W",
+            "W.WW.WW.____.WW.WW.W", // _ = Door (Visual wall but passable? or just empty)
+            "W....W..GGGG..W....W", // G = Ghost Start
+            "WWWW.W.WWWWWW.W.WWWW",
+            ".......W....W.......", // Tunnel sides
+            "WWWW.W.WWWWWW.W.WWWW",
+            "W....W........W....W",
+            "W.WW.WW.WWWW.WW.WW.W",
+            "WO......P.........OW",
+            "WWWWWWWWWWWWWWWWWWWW"
+        ];
+
+        const DIR = { NONE: { x: 0, z: 0 }, UP: { x: 0, z: -1 }, DOWN: { x: 0, z: 1 }, LEFT: { x: -1, z: 0 }, RIGHT: { x: 1, z: 0 } };
+
+        // Globals
+        let scene, camera, renderer, clock;
+        let walls = [], dots = [], enemies = [];
+        let player = {
+            sprite: null,
+            col: 0, row: 0,
+            targetCol: 0, targetRow: 0,
+            lerpTime: 0, isMoving: false,
+            currentDir: DIR.NONE, nextDir: DIR.NONE,
+            spawnCol: 0, spawnRow: 0,
+            animTimer: 0, frame: 0
+        };
+
+        let gameState = {
+            over: false,
+            powerTimer: 0,
+            dotsRemaining: 0,
+            enemyReleaseTimer: 0,
+            enemiesReleased: 0
+        };
+
+        // Texture Cache
+        let texPacman = [], texGhost = [], texGhostVuln;
+
+        init();
+        animate();
+
+        function createPixelTexture(drawFn) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false; // Pixel art look
+            drawFn(ctx, 64, 64);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.magFilter = THREE.NearestFilter; // Sharp pixels
+            return tex;
+        }
+
+        function generateTextures() {
+            // Pacman Frames (0: Closed, 1: Half, 2: Open)
+            const colors = ['#FFD700', '#FFA500']; // Gold/Orange gradient feel
+
+            for (let i = 0; i < 3; i++) {
+                texPacman.push(createPixelTexture((ctx, w, h) => {
+                    ctx.fillStyle = colors[0];
+                    ctx.beginPath();
+                    // Draw generic circle base
+                    ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Eye (Pixelated)
+                    ctx.fillStyle = 'black';
+                    ctx.fillRect(w / 2 + 4, h / 4, 6, 6);
+
+                    // Mouth Wedge
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.beginPath();
+                    const mouthAngle = (i * 0.2); // 0, 0.2, 0.4
+                    ctx.moveTo(w / 2, h / 2);
+                    ctx.arc(w / 2, h / 2, w / 2, -mouthAngle, mouthAngle);
+                    ctx.fill();
+                    ctx.globalCompositeOperation = 'source-over';
+
+                    // Simple pixel outline
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(w / 2, h / 2, w / 2 - 2, 0, Math.PI * 2); ctx.stroke();
+                }));
+            }
+
+            // Ghost Normal
+            // We need eyes that can move? For simplicity, baked textures with "looking" might be overkill.
+            // Let's utilize the "Billboard" nature to just flip texture? 
+            // Better: Draw eyes separately? Or just one texture 'looking forward' 
+            // User asked: "White and Black eyes (looking around) to be cute".
+            // Let's create one base Ghost body texture, and separate Eye textures? 
+            // To keep it simple in ThreeJS sprites: Baked textures for directions or wiggle eyes.
+            // Let's do: Wiggle eyes (pupils move based on direction).
+            // Actually, for a single sprite, we can just update the UV or texture offset? 
+            // Easiest: Just animated texture where eyes wobble.
+
+            texGhost = createPixelTexture((ctx, w, h) => {
+                // Body
+                ctx.fillStyle = '#FF0000'; // Will be tinted by Material color
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2 - 4, w / 2 - 4, Math.PI, 0); // Head
+                ctx.lineTo(w - 4, h - 4);
+                // Wavy bottom
+                for (let k = 1; k <= 3; k++) {
+                    ctx.lineTo(w - (w / 3) * k, h - (k % 2 == 0 ? 4 : 10));
+                }
+                ctx.lineTo(4, h / 2 - 4);
+                ctx.fill();
+
+                // Eyes Logic handled in separate Sprite? Or drawing white sclera here.
+                ctx.fillStyle = 'white';
+                ctx.beginPath(); ctx.arc(w / 2 - 10, h / 2 - 5, 8, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(w / 2 + 10, h / 2 - 5, 8, 0, Math.PI * 2); ctx.fill();
+
+                // Pupils (Black) - Centered default
+                ctx.fillStyle = 'black';
+                ctx.beginPath(); ctx.arc(w / 2 - 8, h / 2 - 5, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(w / 2 + 12, h / 2 - 5, 4, 0, Math.PI * 2); ctx.fill();
+            });
+
+            texGhostVuln = createPixelTexture((ctx, w, h) => {
+                ctx.fillStyle = '#0000FF'; // Blue
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2 - 4, w / 2 - 4, Math.PI, 0);
+                ctx.lineTo(w - 4, h - 4);
+                ctx.lineTo(4, h - 4);
+                ctx.fill();
+
+                // Wavy mouth for scared face
+                ctx.strokeStyle = '#FFCCFF';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, h - 15);
+                ctx.lineTo(15, h - 25); ctx.lineTo(25, h - 15); ctx.lineTo(35, h - 25); ctx.lineTo(45, h - 15);
+                ctx.stroke();
+
+                // Scared Eyes
+                ctx.fillStyle = '#FFCCFF';
+                ctx.fillRect(w / 2 - 12, 15, 6, 6);
+                ctx.fillRect(w / 2 + 6, 15, 6, 6);
+            });
+        }
+
+        function init() {
+            generateTextures();
+            clock = new THREE.Clock();
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050510); // Darker blue-ish cinematic bg
+
+            // Map Dimensions
+            const mapW = mapConfig[0].length * TILE_SIZE;
+            const mapH = mapConfig.length * TILE_SIZE;
+            const cx = mapW / 2, cz = mapH / 2;
+
+            // ISOMETRIC / QUARTER VIEW
+            // Orthographic would be true 2D, but User asked "Depth feel" + "Quarter view".
+            // High Angle Perspective is best for HD-2D.
+            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 1000);
+            const dist = 300;
+            camera.position.set(cx, dist, cz + dist * 0.8); // Back and Up
+            camera.lookAt(cx, 0, cz);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.SoftShadowMap; // Softer shadows for 2D sprites
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0x666688, 1.5)); // Cool ambient
+
+            const dl = new THREE.DirectionalLight(0xffddaa, 2.0); // Warm sun
+            dl.position.set(cx - 50, 200, cz - 50);
+            dl.castShadow = true;
+            dl.shadow.mapSize.width = 2048; dl.shadow.mapSize.height = 2048;
+            dl.shadow.camera.left = -mapW; dl.shadow.camera.right = mapW;
+            dl.shadow.camera.top = mapH; dl.shadow.camera.bottom = -mapH;
+            scene.add(dl);
+
+            buildLevel();
+
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('resize', onResize);
+        }
+
+        function buildLevel() {
+            // Materials
+            // Walls: Slightly transparent/glossy for that HD-2D glass/block look? Or just solid.
+            const matWall = new THREE.MeshStandardMaterial({
+                color: 0x3344cc,
+                roughness: 0.2,
+                metalness: 0.8
+            });
+            const matDot = new THREE.MeshPhongMaterial({ color: 0xffbbbb, emissive: 0x552222 });
+            const matPower = new THREE.MeshPhongMaterial({ color: 0xffffaa, emissive: 0x888800 });
+
+            walls = []; dots = []; enemies = [];
+            gameState.dotsRemaining = 0;
+            gameState.enemiesReleased = 0;
+            gameState.enemyReleaseTimer = 0;
+
+            const ghostColors = [0xFF0000, 0xFFB8FF, 0x00FFFF, 0xFFB852]; // Red, Pink, Cyan, Orange
+
+            for (let r = 0; r < mapConfig.length; r++) {
+                for (let c = 0; c < mapConfig[r].length; c++) {
+                    const char = mapConfig[r][c];
+                    const x = c * TILE_SIZE + TILE_SIZE / 2;
+                    const z = r * TILE_SIZE + TILE_SIZE / 2;
+
+                    // Floor Tile (Darker checkerboard?)
+                    const floorGeo = new THREE.PlaneGeometry(TILE_SIZE, TILE_SIZE);
+                    const floorMat = new THREE.MeshStandardMaterial({ color: (c + r) % 2 == 0 ? 0x111116 : 0x151520, roughness: 0.8 });
+                    const floor = new THREE.Mesh(floorGeo, floorMat);
+                    floor.rotation.x = -Math.PI / 2;
+                    floor.position.set(x, 0, z);
+                    floor.receiveShadow = true;
+                    scene.add(floor);
+
+                    if (char === 'W') {
+                        const h = 12;
+                        const m = new THREE.Mesh(new THREE.BoxGeometry(TILE_SIZE, h, TILE_SIZE), matWall);
+                        m.position.set(x, h / 2, z);
+                        m.castShadow = true; m.receiveShadow = true;
+                        scene.add(m);
+                        walls.push({ c, r });
+                    }
+                    else if (char === 'G') {
+                        // Queue ghost spawn
+                        const idx = enemies.length;
+                        const color = ghostColors[idx % ghostColors.length];
+                        createEnemy(x, z, c, r, color);
+                    }
+                    else if (char === 'P') {
+                        createPlayer(x, z);
+                        player.col = c; player.row = r;
+                        player.targetCol = c; player.targetRow = r;
+                        player.spawnCol = c; player.spawnRow = r;
+                    }
+                    else if (char === 'O') {
+                        createDot(x, z, c, r, true, matPower);
+                    }
+                    else if (char === '.') {
+                        createDot(x, z, c, r, false, matDot);
+                    }
+                    else if (char === '_') {
+                        // Ghost Door - Visually distinct floor?
+                        floor.material.color.setHex(0x331111);
+                    }
+                }
+            }
+        }
+
+        function createDot(x, z, c, r, isPower, mat) {
+            const g = new THREE.SphereGeometry(isPower ? POWER_DOT_RADIUS : DOT_RADIUS);
+            const m = new THREE.Mesh(g, mat);
+            m.position.set(x, 3, z);
+            // Floating tween handled in animate
+            scene.add(m);
+            dots.push({ mesh: m, c, r, isPower, active: true, baseY: 3 });
+            gameState.dotsRemaining++;
+        }
+
+        function createPlayer(x, z) {
+            const mat = new THREE.SpriteMaterial({ map: texPacman[0], color: 0xffffff });
+            player.sprite = new THREE.Sprite(mat);
+            player.sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE, 1);
+            player.sprite.position.set(x, SPRITE_SCALE / 2, z);
+            // Shadows for sprites not natively supported easily without custom depth mat, 
+            // but we can add a fake shadow blob
+            const shadowGeo = new THREE.CircleGeometry(4, 16);
+            const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0.5, transparent: true });
+            const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+            shadow.rotation.x = -Math.PI / 2;
+            shadow.position.y = 0.5;
+            player.sprite.add(shadow); // Attach shadow to sprite
+
+            scene.add(player.sprite);
+        }
+
+        function createEnemy(x, z, c, r, colorHex) {
+            // White body texture, tinted by color
+            const mat = new THREE.SpriteMaterial({ map: texGhost, color: colorHex });
+            const sprite = new THREE.Sprite(mat);
+            sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE, 1);
+            sprite.position.set(x, SPRITE_SCALE / 2, z);
+
+            // Fake shadow
+            const shadow = new THREE.Mesh(
+                new THREE.CircleGeometry(4, 16),
+                new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0.5, transparent: true })
+            );
+            shadow.rotation.x = -Math.PI / 2;
+            shadow.position.y = 0.5;
+            sprite.add(shadow);
+
+            scene.add(sprite);
+
+            enemies.push({
+                sprite: sprite,
+                baseColor: colorHex,
+                col: c, row: r,
+                targetCol: c, targetRow: r,
+                spawnCol: c, spawnRow: r,
+                currentDir: DIR.NONE,
+                lerpTime: 0, isMoving: false,
+                status: 'WAITING', // WAITING -> EXITING -> NORMAL
+                waitOrder: enemies.length
+            });
+        }
+
+        function onKeyDown(e) {
+            if (gameState.over) return;
+            switch (e.code) {
+                case 'ArrowUp': player.nextDir = DIR.UP; break;
+                case 'ArrowDown': player.nextDir = DIR.DOWN; break;
+                case 'ArrowLeft': player.nextDir = DIR.LEFT; break;
+                case 'ArrowRight': player.nextDir = DIR.RIGHT; break;
+            }
+        }
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function isWall(c, r) {
+            if (r < 0 || c < 0 || r >= mapConfig.length || c >= mapConfig[0].length) return true;
+            return mapConfig[r][c] === 'W';
+        }
+
+        function updateEntity(ent, dt, isPlayer) {
+            // Sprite Facing (Billboarding is automatic, but we might flip X for Left/Right look)
+            // Pacman rotation
+            if (isPlayer) {
+                if (ent.currentDir === DIR.LEFT) ent.sprite.material.rotation = Math.PI; // Upside down? No, sprites rotate Z
+                // Sprite rotation rotates the image plane 2D. 
+                // Creating 'facing' requires rotation based on direction.
+                let rot = 0;
+                if (ent.currentDir === DIR.UP) rot = Math.PI / 2;
+                if (ent.currentDir === DIR.DOWN) rot = -Math.PI / 2;
+                if (ent.currentDir === DIR.LEFT) rot = Math.PI;
+                if (ent.currentDir === DIR.RIGHT) rot = 0;
+                // However, our texture is Right-facing 0 deg.
+                ent.sprite.material.rotation = rot;
+            }
+
+            if (!ent.isMoving) {
+                if (!isPlayer && ent.status === 'WAITING') return; // Stuck in house
+
+                let moveDir = DIR.NONE;
+
+                if (isPlayer) {
+                    if (ent.nextDir !== DIR.NONE && !isWall(ent.col + ent.nextDir.x, ent.row + ent.nextDir.z)) {
+                        ent.currentDir = ent.nextDir;
+                        moveDir = ent.currentDir;
+                    } else if (ent.currentDir !== DIR.NONE && !isWall(ent.col + ent.currentDir.x, ent.row + ent.currentDir.z)) {
+                        moveDir = ent.currentDir;
+                    }
+                } else {
+                    // Enemy AI
+                    if (ent.status === 'EATEN') ent.status = 'NORMAL';
+
+                    // Basic random choice
+                    const exits = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT].filter(d => !isWall(ent.col + d.x, ent.row + d.z));
+                    if (exits.length > 2 || isWall(ent.col + ent.currentDir.x, ent.row + ent.currentDir.z) || ent.currentDir === DIR.NONE) {
+                        let valid = exits;
+                        if (exits.length > 1 && ent.currentDir !== DIR.NONE) {
+                            valid = exits.filter(d => !(d.x === -ent.currentDir.x && d.z === -ent.currentDir.z));
+                        }
+                        moveDir = valid[Math.floor(Math.random() * valid.length)] || DIR.NONE;
+                        ent.currentDir = moveDir;
+                    } else {
+                        moveDir = ent.currentDir;
+                    }
+                }
+
+                if (moveDir !== DIR.NONE && !isWall(ent.col + moveDir.x, ent.row + moveDir.z)) {
+                    ent.isMoving = true;
+                    ent.targetCol = ent.col + moveDir.x;
+                    ent.targetRow = ent.row + moveDir.z;
+                    ent.lerpTime = 0;
+                }
+            } else {
+                // Moving Phase
+                let speed = MOVE_DURATION;
+                if (!isPlayer && ent.status === 'VULNERABLE') speed *= 2.0;
+
+                ent.lerpTime += dt / speed;
+                if (ent.lerpTime >= 1.0) {
+                    ent.col = ent.targetCol;
+                    ent.row = ent.targetRow;
+                    ent.isMoving = false;
+                    ent.lerpTime = 0;
+
+                    const gx = ent.col * TILE_SIZE + TILE_SIZE / 2;
+                    const gz = ent.row * TILE_SIZE + TILE_SIZE / 2;
+
+                    if (isPlayer) ent.sprite.position.set(gx, SPRITE_SCALE / 2, gz);
+                    else ent.sprite.position.set(gx, SPRITE_SCALE / 2, gz);
+
+                    if (isPlayer) checkEat(ent.col, ent.row);
+
+                    updateEntity(ent, 0, isPlayer);
+                } else {
+                    const sx = ent.col * TILE_SIZE + TILE_SIZE / 2;
+                    const sz = ent.row * TILE_SIZE + TILE_SIZE / 2;
+                    const ex = ent.targetCol * TILE_SIZE + TILE_SIZE / 2;
+                    const ez = ent.targetRow * TILE_SIZE + TILE_SIZE / 2;
+                    const t = ent.lerpTime;
+
+                    const nx = sx + (ex - sx) * t;
+                    const nz = sz + (ez - sz) * t;
+
+                    if (isPlayer) ent.sprite.position.set(nx, SPRITE_SCALE / 2, nz);
+                    else ent.sprite.position.set(nx, SPRITE_SCALE / 2, nz);
+                }
+            }
+        }
+
+        function checkEat(c, r) {
+            const idx = dots.findIndex(d => d.active && d.c === c && d.r === r);
+            if (idx !== -1) {
+                const dot = dots[idx];
+                dot.active = false;
+                dot.mesh.visible = false;
+                gameState.dotsRemaining--;
+
+                if (dot.isPower) activatePowerMode();
+                if (gameState.dotsRemaining <= 0) gameWin();
+            }
+        }
+
+        function activatePowerMode() {
+            gameState.powerTimer = POWER_DURATION;
+            enemies.forEach(e => {
+                if (e.status !== 'WAITING') {
+                    e.status = 'VULNERABLE';
+                    e.sprite.material.map = texGhostVuln;
+                    e.sprite.material.color.setHex(0xffffff); // Use pure texture, remove tint
+                }
+            });
+        }
+
+        function checkCollisions() {
+            const px = player.sprite.position.x;
+            const pz = player.sprite.position.z;
+
+            enemies.forEach(e => {
+                if (e.status === 'EATEN' || e.status === 'WAITING') return;
+
+                const ex = e.sprite.position.x;
+                const ez = e.sprite.position.z;
+                const dist = Math.hypot(px - ex, pz - ez);
+
+                if (dist < (TILE_SIZE * 0.8)) {
+                    if (e.status === 'VULNERABLE') {
+                        // Eaten
+                        e.status = 'EATEN';
+                        // Reset
+                        e.col = e.spawnCol; e.row = e.spawnRow;
+                        e.targetCol = e.spawnCol; e.targetRow = e.spawnRow;
+                        e.isMoving = false;
+                        e.sprite.position.set(e.col * TILE_SIZE + TILE_SIZE / 2, SPRITE_SCALE / 2, e.row * TILE_SIZE + TILE_SIZE / 2);
+                        e.status = 'NORMAL';
+                        e.sprite.material.map = texGhost;
+                        e.sprite.material.color.setHex(e.baseColor);
+                    } else if (e.status === 'NORMAL') {
+                        gameOver();
+                    }
+                }
+            });
+        }
+
+        function gameOver() {
+            gameState.over = true;
+            document.getElementById('game-over-box').style.display = 'block';
+        }
+
+        function gameWin() {
+            gameState.over = true;
+            document.getElementById('game-clear-box').style.display = 'block';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!gameState.over) {
+                const dt = clock.getDelta();
+                const now = clock.getElapsedTime();
+
+                // Spawn Logic
+                gameState.enemyReleaseTimer += dt;
+                if (gameState.enemyReleaseTimer > ENEMY_SPAWN_INTERVAL) {
+                    const waiter = enemies.find(e => e.status === 'WAITING');
+                    if (waiter) {
+                        waiter.status = 'NORMAL';
+                        // Force initial move out?
+                        // Just letting the UpdateEntity pick a valid direction (which should be the only open door) works if map is designed right.
+                        // Our ghost house 'G' has no walls around it inside the map logic for simplicity of AI
+                        gameState.enemyReleaseTimer = 0;
+                    }
+                }
+
+                // Power Timer
+                if (gameState.powerTimer > 0) {
+                    gameState.powerTimer -= dt;
+                    if (gameState.powerTimer <= 0) {
+                        gameState.powerTimer = 0;
+                        enemies.forEach(e => {
+                            if (e.status !== 'WAITING') {
+                                e.status = 'NORMAL';
+                                e.sprite.material.map = texGhost;
+                                e.sprite.material.color.setHex(e.baseColor);
+                            }
+                        });
+                    }
+                }
+
+                // Player Anim (Texture Swap)
+                player.animTimer += dt;
+                if (player.animTimer > 0.1) {
+                    player.frame = (player.frame + 1) % 3;
+                    const idx = player.frame === 2 ? 1 : player.frame; // 0, 1, 1, 0 pingpong like? Or 0,1,2,0..
+                    // 0(closed), 1(half), 2(open). Ping pong: 0, 1, 2, 1...
+                    const f = [0, 1, 2, 1][player.frame % 4];
+                    player.sprite.material.map = texPacman[f];
+                    player.animTimer = 0;
+                }
+
+                updateEntity(player, dt, true);
+                enemies.forEach(e => updateEntity(e, dt, false));
+                checkCollisions();
+            }
+
+            // Dot bobbing
+            const t = Date.now() * 0.005;
+            dots.forEach(d => {
+                if (d.active) {
+                    d.mesh.position.y = d.baseY + Math.sin(t + d.c) * 0.5;
+                    if (d.isPower) d.mesh.scale.setScalar(1 + Math.sin(t * 2) * 0.2);
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+
+</html>

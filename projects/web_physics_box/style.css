@@ -1,0 +1,187 @@
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #222;
+}
+
+canvas {
+    display: block;
+}
+
+/* UI Layer */
+#ui-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    /* Let clicks pass through to canvas when not interacting with UI */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+#message {
+    font-size: 3rem;
+    color: #ffd700;
+    font-family: 'Arial', sans-serif;
+    text-shadow: 2px 2px 4px #000;
+    display: none;
+    /* Hidden by default */
+    margin-bottom: 20px;
+}
+
+#retry-btn {
+    pointer-events: auto;
+    /* Re-enable clicks for button */
+    padding: 15px 30px;
+    font-size: 1.5rem;
+    background-color: #fff;
+    color: #333;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s;
+
+    /* Position bottom right */
+    position: absolute;
+    bottom: 30px;
+    right: 30px;
+}
+
+#retry-btn:active {
+    transform: scale(0.95);
+}
+
+#next-stage-btn {
+    pointer-events: auto;
+    padding: 15px 30px;
+    font-size: 1.5rem;
+    background-color: #ffd700;
+    /* Gold color */
+    color: #333;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s;
+    margin-top: 20px;
+    display: none;
+    /* Hidden by default */
+}
+
+#next-stage-btn:active {
+    transform: scale(0.95);
+}
+
+#stats-display {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    color: #fff;
+    font-family: 'Arial', sans-serif;
+    font-size: 1.5rem;
+    pointer-events: none;
+    text-shadow: 1px 1px 2px #000;
+    line-height: 1.4;
+}
+
+#goal-display {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    color: #fff;
+    font-family: 'Arial', sans-serif;
+    font-size: 1.5rem;
+    pointer-events: none;
+    text-shadow: 1px 1px 2px #000;
+    text-align: right;
+}
+
+/* Start Screen */
+#start-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(34, 34, 34, 0.9);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+
+#start-screen h1 {
+    color: #fff;
+    font-family: 'Arial', sans-serif;
+    font-size: 3rem;
+    margin-bottom: 20px;
+}
+
+#start-screen p {
+    color: #ccc;
+    font-family: 'Arial', sans-serif;
+    font-size: 1.5rem;
+    text-align: center;
+    margin-bottom: 40px;
+    line-height: 1.5;
+}
+
+#start-btn {
+    padding: 20px 40px;
+    font-size: 1.5rem;
+    background-color: #ffd700;
+    color: #333;
+    border: none;
+    border-radius: 50px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    transition: transform 0.1s, background-color 0.1s;
+}
+
+#start-btn:hover {
+    background-color: #ffec8b;
+}
+
+#start-btn:active {
+    transform: scale(0.95);
+}
+
+/* Wind Effect */
+#wind-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 1;
+    /* Below UI but above canvas (if possible) - canvas is usually z-index auto/0. ui is above. */
+    /* Wait, canvas is appended to body. UI is absolute. Wind layer should be absolute too. */
+}
+
+.wind-line {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.3);
+    height: 2px;
+    border-radius: 2px;
+    transform: translateX(-100%);
+    animation: windFlow linear infinite;
+}
+
+@keyframes windFlow {
+    from {
+        transform: translateX(-100%);
+    }
+
+    to {
+        transform: translateX(100vw);
+    }
+}

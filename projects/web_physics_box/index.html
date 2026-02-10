@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Physics Box</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="script.js" defer></script>
+</head>
+
+<body>
+    <!-- Canvas will be created by Matter.js or we can append it here, 
+         but usually Matter.Render.create appends it to document.body -->
+    <div id="start-screen">
+        <h1>Physics Box Game</h1>
+        <p>Goal: Drop the box into the moving basket<br>and keep it there for 3 seconds!</p>
+        <button id="start-btn">Game Start</button>
+    </div>
+    <div id="wind-layer" style="display: none;"></div>
+    <div id="ui-layer">
+        <div id="stats-display">Time: 0.00s<br>Blocks: 0</div>
+        <div id="goal-display">Goal: ...</div>
+        <div id="message">Game Clear!</div>
+        <button id="next-stage-btn" style="display: none;">Next Stage</button>
+        <button id="retry-btn">Retry</button>
+    </div>
+</body>
+
+</html>
