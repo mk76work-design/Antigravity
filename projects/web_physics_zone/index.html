@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Physics Zone Throw</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="script.js" defer></script>
+</head>
+
+<body>
+    <div id="start-screen">
+        <h1>Zone Throw</h1>
+        <p>Allowed Area Only!<br>Throw the box into the goal within the time limit!</p>
+        <button id="start-btn">Game Start</button>
+    </div>
+
+    <!-- UI Layer -->
+    <div id="ui-layer">
+        <div id="top-bar">
+            <div id="timer-display">Time: 60.00s</div>
+            <div id="stage-display">Stage: 1</div>
+        </div>
+
+        <div id="goal-info">Goal: Keep box in basket for 3s</div>
+
+        <div id="message">Game Clear!</div>
+
+        <div id="controls">
+            <button id="next-stage-btn" style="display: none;">Next Stage</button>
+            <button id="retry-btn">Retry</button>
+        </div>
+    </div>
+</body>
+
+</html>
